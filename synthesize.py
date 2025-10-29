@@ -16,6 +16,10 @@ from typing import List, Dict, Any, Optional
 from together import Together
 import argparse
 from datetime import datetime
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 class ConversationProcessor:
     """Handles processing of conversations with feedback."""

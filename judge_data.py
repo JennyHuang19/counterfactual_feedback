@@ -308,35 +308,110 @@ class ModelEvaluator:
         ### end sample print
         return valid_conversations
     
-    def load_feedback_dataset(self, path: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
-        """Load feedback dataset for comparing current vs original responses.
+    # def load_feedback_dataset(self, path: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+    #     """Load feedback dataset for comparing current vs original responses.
+        
+    #     Args:
+    #         path: Path to feedback dataset file
+    #         limit: Maximum number of conversations to load (optional)
+    #     """
+        
+    #     print(f"Loading feedback dataset from {path}...")
+    #     with open(path, 'r', encoding='utf-8') as f:
+    #         all_conversations = json.load(f)
+        
+    #     # Limit if specified
+    #     if limit:
+    #         all_conversations = all_conversations[:limit]
+        
+    #     print(f"Loaded {len(all_conversations)} conversations from feedback dataset")
+        
+    #     # Filter to only use conversations that have original_assistant_response
+    #     valid_conversations = []
+    #     for conv in all_conversations:
+    #         if 'original_assistant_response' in conv and conv['original_assistant_response']:
+    #             context = conv.get('conversation_context', [])
+    #             # Make sure the conversation context has at least one turn and ends with assistant
+    #             if len(context) >= 1 and context[-1].get('role') == 'assistant':
+    #                 valid_conversations.append(conv)
+        
+    #     print(f"Found {len(valid_conversations)} valid conversations with original responses to compare")
+    #     return valid_conversations
+
+    def load_all_datasets(self, path_original_context: str, path_feedback_context: str, path_alternative_gen_context: Optional[str] = None, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Load all datasets (original_context_list, feedback_context_list, alternative_gen_context_list) for evaluation.
         
         Args:
             path: Path to feedback dataset file
             limit: Maximum number of conversations to load (optional)
         """
-        
-        print(f"Loading feedback dataset from {path}...")
-        with open(path, 'r', encoding='utf-8') as f:
-            all_conversations = json.load(f)
-        
-        # Limit if specified
+
+        print(f"Loading feedback dataset from {path_feedback_context}...")
+        with open(path_feedback_context, 'r', encoding='utf-8') as f:
+            feedback_context_list = json.load(f)
+        print(f"Loaded {len(feedback_context_list)} conversations from feedback dataset")
+
+        print(f"Loading original context dataset from {path_original_context}...")
+        with open(path_original_context, 'r', encoding='utf-8') as f:
+            original_context_list = json.load(f)
+        print(f"Loaded {len(original_context_list)} conversations from original context dataset")
+
+        if path_alternative_gen_context:
+            print(f"Loading alternative generation context dataset from {path_alternative_gen_context}...")
+            with open(path_alternative_gen_context, 'r', encoding='utf-8') as f:
+                alternative_gen_context_list = json.load(f)
+            print(f"Loaded {len(alternative_gen_context_list)} conversations from alternative generation context dataset")
+
+        # Filter to only the conversation IDs that are present in all three datasets and appear in category UR2 or UR3 in original_context_list.
+        valid_original_context_list = []
+        valid_feedback_context_list = []
+        valid_alternative_gen_context_list = []
+        for orig_conv in original_context_list:
+            conv_id = orig_conv.get('conversation_id', None)
+            # Skip repeat conversations because the original context list has appearances 
+            # of the same conversation stopped at different points in the conversation.
+            if sum(1 for c in original_context_list if c.get('conversation_id', None) == conv_id) > 1:
+                continue
+            
+            category = orig_conv.get('category', None)
+            if conv_id is None or category not in ['UR2', 'UR3']:
+                continue
+            
+            # Find matching feedback context
+            feedback_conv = next((conv for conv in feedback_context_list if conv.get('conversation_id', None) == conv_id), None)
+            if feedback_conv is None:
+                continue
+            
+            # Find matching alternative generation context if provided
+            if path_alternative_gen_context:
+                alternative_gen_conv = next((conv for conv in alternative_gen_context_list if conv.get('conversation_id', None) == conv_id), None)
+                if alternative_gen_conv is None:
+                    continue
+
+            valid_original_context_list.append(orig_conv)
+            valid_feedback_context_list.append(feedback_conv)   
+            if path_alternative_gen_context:
+                valid_alternative_gen_context_list.append(alternative_gen_conv)
+
+        print(f"Found {len(valid_original_context_list)} valid conversations with feedback and alternative generations to compare.")
+
         if limit:
-            all_conversations = all_conversations[:limit]
-        
-        print(f"Loaded {len(all_conversations)} conversations from feedback dataset")
-        
-        # Filter to only use conversations that have original_assistant_response
-        valid_conversations = []
-        for conv in all_conversations:
-            if 'original_assistant_response' in conv and conv['original_assistant_response']:
-                context = conv.get('conversation_context', [])
-                # Make sure the conversation context has at least one turn and ends with assistant
-                if len(context) >= 1 and context[-1].get('role') == 'assistant':
-                    valid_conversations.append(conv)
-        
-        print(f"Found {len(valid_conversations)} valid conversations with original responses to compare")
-        return valid_conversations
+            valid_original_context_list = valid_original_context_list[:limit]
+            valid_feedback_context_list = valid_feedback_context_list[:limit]
+            if path_alternative_gen_context:
+                valid_alternative_gen_context_list = valid_alternative_gen_context_list[:limit]
+            print(f"Limited to first {limit} conversations for testing.")
+    
+        # save each list to json files (for sanity check).
+        # with open('data/valid_original_context.json', 'w', encoding='utf-8') as f:
+        #     json.dump(valid_original_context_list, f, indent=2)
+        # with open('data/valid_feedback_context.json', 'w', encoding='utf-8') as f:
+        #     json.dump(valid_feedback_context_list, f, indent=2)
+        # if path_alternative_gen_context:
+        #     with open('data/valid_alternative_gen_context.json', 'w', encoding='utf-8') as f:
+        #         json.dump(valid_alternative_gen_context_list, f, indent=2)
+
+        return valid_original_context_list, valid_feedback_context_list, valid_alternative_gen_context_list
     
     def prepare_conversation_context(self, conversation: Dict[str, Any]) -> List[Dict[str, str]]:
         """
@@ -616,13 +691,16 @@ class ModelEvaluator:
             'winner': winner,
             'order': order
         }
-    
-    def evaluate_feedback_conversation(self, conversation: Dict[str, Any], judge_model: str, conv_idx: int) -> Dict[str, Any]:
+
+    def evaluate_feedback_conversation(self, original_context: Dict[str, Any], feedback_context: Dict[str, Any], alternative_gen_context: Optional[Dict[str, Any]], judge_model: str, conv_idx: int) -> Dict[str, Any]:
         """
         Evaluate a single conversation from feedback dataset by comparing current vs original response.
         
         Args:
-            conversation: Conversation from feedback dataset
+            original_context: original conversation context (e.g., an element in filtered_conversations_ur235_mode3.json).
+            feedback_context: conversation context of the regenerated conversation; 
+            note, contains only the last two rounds are present in these datasets i.e., {user, new assistant response} (e.g., an element in feedback.json).
+            alternative_gen_context: conversation context of the alternative generation method; none if comparing feedback vs. original.
             judge_model: Name of judge model
             conv_idx: Index of conversation for logging
             
@@ -632,27 +710,30 @@ class ModelEvaluator:
         print(f"Evaluating feedback conversation {conv_idx + 1}...")
         
         # Get the context (without the current assistant response)
-        context = self.prepare_feedback_conversation_context(conversation)
-        current_response = self.get_current_response(conversation)
-        original_response = conversation.get('original_assistant_response', '')
-        
+        context = self.prepare_conversation_context(original_context) # removes the last 2 turns.
+        current_response = self.get_current_response(feedback_context) # gets the last turn.
+        if alternative_gen_context:
+            original_response = self.get_current_response(alternative_gen_context) # gets the last turn from alternative generation method.
+        else:
+            original_response = feedback_context.get('original_assistant_response', '')
+
         if not context:
             return {
-                'conversation_id': conversation.get('conversation_id', f'conv_{conv_idx}'),
+                'conversation_id': original_context.get('conversation_id', f'conv_{conv_idx}'),
                 'status': 'error',
                 'error': 'Empty context after removing current assistant response'
             }
         
         if not current_response:
             return {
-                'conversation_id': conversation.get('conversation_id', f'conv_{conv_idx}'),
+                'conversation_id': feedback_context.get('conversation_id', f'conv_{conv_idx}'),
                 'status': 'error',
                 'error': 'No current assistant response found'
             }
         
         if not original_response:
             return {
-                'conversation_id': conversation.get('conversation_id', f'conv_{conv_idx}'),
+                'conversation_id': feedback_context.get('conversation_id', f'conv_{conv_idx}'),
                 'status': 'error',
                 'error': 'No original assistant response found'
             }
@@ -669,7 +750,7 @@ class ModelEvaluator:
         
         if judgment is None:
             return {
-                'conversation_id': conversation.get('conversation_id', f'conv_{conv_idx}'),
+                'conversation_id': original_context.get('conversation_id', f'conv_{conv_idx}'),
                 'status': 'error',
                 'error': 'Failed to get judgment from judge model'
             }
@@ -691,7 +772,7 @@ class ModelEvaluator:
             winner = "tie"
         
         return {
-            'conversation_id': conversation.get('conversation_id', f'conv_{conv_idx}'),
+            'conversation_id': feedback_context.get('conversation_id', f'conv_{conv_idx}'),
             'status': 'success',
             'context': context,
             'current_response': current_response,
@@ -699,9 +780,9 @@ class ModelEvaluator:
             'judgment': judgment,
             'winner': winner,
             'order': order,
-            'model': conversation.get('model', 'unknown'),
-            'category': conversation.get('category', 'unknown'),
-            'label': conversation.get('label', None)
+            'model': feedback_context.get('model', 'unknown'),
+            'category': feedback_context.get('category', 'unknown'),
+            'label': feedback_context.get('label', None)
         }
     
     def run_evaluation(self, test_conversations: List[Dict[str, Any]], 
@@ -784,14 +865,16 @@ class ModelEvaluator:
         }
         
         return final_results
-    
-    def run_feedback_evaluation(self, test_conversations: List[Dict[str, Any]], 
+
+    def run_feedback_evaluation(self, original_context_list: List[Dict[str, Any]], feedback_context_list: List[Dict[str, Any]], alternative_gen_context_list: Optional[List[Dict[str, Any]]], 
                                judge_model: str, delay: float = 0.5) -> Dict[str, Any]:
         """
-        Run evaluation on feedback dataset comparing current vs original responses.
+        Run evaluation on feedback dataset comparing original vs regenerated responses.
         
         Args:
-            test_conversations: List of conversations from feedback dataset
+            original_context_list: list of original conversation contexts
+            feedback_context_list: list of regenerated conversation contexts
+            alternative_gen_context_list: list of conversation contexts of the alternative generation method; none if comparing feedback vs. original.
             judge_model: Name of judge model
             delay: Delay between API calls
             
@@ -800,16 +883,26 @@ class ModelEvaluator:
         """
         print(f"\nStarting feedback evaluation...")
         print(f"Judge model: {judge_model}")
-        print(f"Total conversations: {len(test_conversations)}")
+        print(f"Total conversations: {len(original_context_list)}")
         
         results = []
-        
-        for i, conversation in enumerate(test_conversations):
-            result = self.evaluate_feedback_conversation(conversation, judge_model, i)
+
+        for i, this_conversation in enumerate(original_context_list):
+            conv_id = this_conversation.get('conversation_id', f'conv_{i}')
+            # retrieve the item in feedback_context_list with the same conversation_id
+            this_feedback_context = next((item for item in feedback_context_list if item.get('conversation_id') == conv_id), None) # O(n) linear search, but eval dataset should be small enough. can also reverse dict but some conv ID's are NOT unique.
+            if alternative_gen_context_list:
+                this_alternative_gen_context = next((item for item in alternative_gen_context_list if item.get('conversation_id') == conv_id), None)
+                result = self.evaluate_feedback_conversation(this_conversation, this_feedback_context, this_alternative_gen_context, judge_model, i)
+            else:
+                this_alternative_gen_context = None
+                result = self.evaluate_feedback_conversation(this_conversation, this_feedback_context, this_alternative_gen_context, judge_model, i) # no alternative generation context.
+            ###
+            
             results.append(result)
             
             # Add delay between requests
-            if i < len(test_conversations) - 1:
+            if i < len(original_context_list) - 1:
                 time.sleep(delay)
         
         # Calculate summary statistics
@@ -893,7 +986,7 @@ class ModelEvaluator:
             'judge_model': judge_model,
             'timestamp': datetime.now().isoformat(),
             'parameters': {
-                'test_conversations': len(test_conversations),
+                'test_conversations': len(original_context_list),
                 'delay': delay
             },
             'summary': {
@@ -1063,10 +1156,14 @@ def main():
     
     # Feedback comparison mode (new functionality)
     feedback_parser = subparsers.add_parser('feedback', help='Compare current vs original responses in feedback dataset')
-    feedback_parser.add_argument('--dataset', '-d', required=True,
-                                help='Path to feedback dataset file (e.g., data/feedback_10k_8b.json)')
+    feedback_parser.add_argument('--original_context_list', '-orig', required=True,
+                                help='Path to feedback dataset file (e.g., data/filtered_conversations_ur235_mode3.json)')
+    feedback_parser.add_argument('--feedback_context_list', '-reg', required=True,
+                                help='Path to feedback dataset file (e.g., data/feedback.json)')
+    feedback_parser.add_argument('--alternative_gen_context_list', '-alt', required=False,
+                                help='Path to feedback dataset file (e.g., data/alternative.json)')
     feedback_parser.add_argument('--judge', '-j', required=True,
-                                help='Judge model for comparison (e.g., hf:meta-llama/Llama-2-70b-chat-hf or together:meta-llama/Llama-2-70b-chat-hf)')
+                                help='Judge model for comparison (e.g., together:meta-llama/Llama-3.3-70B-Instruct-Turbo or together:Qwen/Qwen3-Next-80B-A3B-Instruct')
     feedback_parser.add_argument('--limit', '-l', type=int,
                                 help='Maximum number of conversations to evaluate (optional)')
     feedback_parser.add_argument('--delay', type=float, default=0.5,
@@ -1126,64 +1223,26 @@ def main():
         # Initialize evaluator
         evaluator = ModelEvaluator()
         results = None
-        
-        if args.mode == 'compare':
-            # Original model comparison mode
+    
+        if args.mode == 'feedback':
+            # feedback comparison mode
             # Generate output filename if not provided
             if not args.output:
                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                model1_short = args.model1.split('/')[-1].replace('-', '_')
-                model2_short = args.model2.split('/')[-1].replace('-', '_')
-                args.output = f"results/evaluation_{model1_short}_vs_{model2_short}_{timestamp}.json"
-            
-            # Load test set
-            test_conversations = evaluator.load_test_set(args.conversations, args.test_size)
-            
-            if not test_conversations:
-                print("Error: No valid conversations found for testing")
-                return 1
-            
-            # Run evaluation
-            results = evaluator.run_evaluation(
-                test_conversations, 
-                args.model1, 
-                args.model2, 
-                args.judge,
-                args.delay
-            )
-            
-            # Print summary for model comparison
-            print(f"\n=== Model Comparison Evaluation Complete ===")
-            print(f"Results saved to: {args.output}")
-            print(f"\nSummary:")
-            print(f"  {args.model1}: {results['summary']['model1_wins']} wins ({results['statistics']['model1_win_rate']:.1%})")
-            print(f"  {args.model2}: {results['summary']['model2_wins']} wins ({results['statistics']['model2_win_rate']:.1%})")
-            print(f"  Ties: {results['summary']['ties']} ({results['statistics']['tie_rate']:.1%})")
-            print(f"  Success rate: {results['summary']['success_rate']:.1%}")
-            
-            stats_info = results['statistics']['statistical_test']
-            print(f"\nStatistical test: {stats_info['interpretation']}")
-            print(f"  P-value: {stats_info['p_value']:.4f}")
-            print(f"  Significant: {stats_info['significant_at_0.05']}")
-            
-        elif args.mode == 'feedback':
-            # New feedback comparison mode
-            # Generate output filename if not provided
-            if not args.output:
-                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                dataset_name = os.path.splitext(os.path.basename(args.dataset))[0]
-                args.output = f"results/feedback_evaluation_{dataset_name}_{timestamp}.json"
-            
-            # Load feedback dataset
-            test_conversations = evaluator.load_feedback_dataset(args.dataset, args.limit)
-            
-            if not test_conversations:
+                args.output = f"results/feedback_evaluation_{timestamp}.json"
+
+            # load original context, feedback, and alternative generation datasets.
+            original_context_list, feedback_context_list, alternative_gen_context_list = evaluator.load_all_datasets(args.original_context_list, args.feedback_context_list, args.alternative_gen_context_list, args.limit)
+
+            if not original_context_list or not feedback_context_list:
                 print("Error: No valid conversations found for testing")
                 return 1
             
             # Run feedback evaluation
             results = evaluator.run_feedback_evaluation(
-                test_conversations,
+                original_context_list,
+                feedback_context_list,
+                alternative_gen_context_list,
                 args.judge,
                 args.delay
             )

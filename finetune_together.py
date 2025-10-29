@@ -19,6 +19,10 @@ from typing import List, Dict, Any, Optional, Union
 from together import Together
 from together.utils import check_file
 import tempfile
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 class FineTuner:
     """Handles fine-tuning of models using the Together API."""

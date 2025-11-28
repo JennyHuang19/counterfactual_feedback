@@ -1232,7 +1232,7 @@ def main():
                 args.output = f"results/feedback_evaluation_{timestamp}.json"
 
             # load original context, feedback, and alternative generation datasets.
-            original_context_list, feedback_context_list, alternative_gen_context_list = evaluator.load_all_datasets(args.original_context_list, args.feedback_context_list, args.alternative_gen_context_list, args.limit)
+            original_context_list, feedback_context_list, alternative_gen_context_list = evaluator.load_all_datasets(args.original_context_list, args.feedback_context_list, args.alternative_gen_context_list, args.limit) # filters for UR2/3
 
             if not original_context_list or not feedback_context_list:
                 print("Error: No valid conversations found for testing")

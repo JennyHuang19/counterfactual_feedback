@@ -146,7 +146,7 @@ Please provide ONLY the improved assistant response, without any meta-commentary
         conversation_history = ""
         
         # Find the user message that the assistant should respond to
-        # (second-to-last in the original, or last after removing feedback)
+        # (3rd-to-last in the original, or 2nd-to-last after removing feedback)
         response_target_idx = -3  # User message before assistant response before feedback
         if len(conversation_context) > abs(response_target_idx):
             target_user_message = conversation_context[response_target_idx]['content']
@@ -177,7 +177,64 @@ Please provide a clear, helpful, and accurate response. Focus on being informati
 Respond as the assistant would, without any meta-commentary or explanation. Provide ONLY the assistant's response:"""
 
         return prompt
-    
+
+    def create_alternative_prompt_including_original_response(self, conversation_context: List[Dict[str, str]]) -> str:
+        """
+        Create a prompt for generating an alternative assistant response that is more helpful,
+        accurate, and appropriate than the original response.
+
+        Args:
+            conversation_context: The conversation history (including the original assistant response)
+
+        Returns:
+            The prompt string for alternative generation
+        """
+        # Build conversation history up to the point where we need a response
+        conversation_history = ""
+
+        # Find the user message that the assistant should respond to
+        # (3rd-to-last in the original, or 2nd-to-last after removing feedback)
+        response_target_idx = -3  # User message before assistant response before feedback
+        if len(conversation_context) > abs(response_target_idx):
+            target_user_message = conversation_context[response_target_idx]['content']
+        else:
+            # Fallback: use the first user message if conversation is too short
+            target_user_message = conversation_context[0]['content']
+
+        # Get the original assistant response (2nd-to-last turn, before feedback)
+        original_assistant_response_target_idx = -2
+        if len(conversation_context) > abs(original_assistant_response_target_idx):
+            original_assistant_response = conversation_context[original_assistant_response_target_idx]['content']
+        else:
+            original_assistant_response = "No response."
+
+        # Build context up to (but not including) the assistant response we're replacing
+        for i, turn in enumerate(conversation_context):
+            # Stop before the assistant response we want to replace
+            if i >= len(conversation_context) - 2:  # Stop before last assistant + feedback
+                break
+            role = turn['role'].upper()
+            content = turn['content']
+            conversation_history += f"{role}: {content}\n\n"
+
+        prompt = f"""You are an AI assistant. Your task is to generate an alternative response that is more helpful, accurate, and appropriate than the original response provided below.
+
+Here is the conversation context:
+
+{conversation_history}
+
+The user's message that needs a response:
+USER: {target_user_message}
+
+The original assistant response was:
+ORIGINAL RESPONSE: {original_assistant_response}
+
+Please provide an alternative response that is MORE helpful, accurate, and appropriate to the user's message. Your response should improve upon the original by being clearer, more informative, more accurate, or more directly addressing what the user is asking for.
+
+Respond as the assistant would, without any meta-commentary or explanation. Provide ONLY the improved assistant's response:"""
+
+        return prompt
+
     def generate_alternative_response(self, conversation_context: List[Dict[str, str]]) -> Optional[str]:
         """
         Generate an alternative assistant response without using feedback.
@@ -190,7 +247,7 @@ Respond as the assistant would, without any meta-commentary or explanation. Prov
         """
         try:
             prompt = self.create_alternative_prompt(conversation_context)
-            
+            # prompt = self.create_alternative_prompt_including_original_response(conversation_context)
             response = self.client.chat.completions.create(
                 model=self.model_name,
                 messages=[{"role": "user", "content": prompt}],
@@ -348,16 +405,16 @@ Respond as the assistant would, without any meta-commentary or explanation. Prov
         print(f"Processing {total} conversations...")
         
         for i, conversation in enumerate(conversations[:max_conversations] if max_conversations else conversations):
-            if i % 100 == 0:
+            if i % 3 == 0:
                 print(f"Progress: {i}/{total} conversations processed")
             
-            processed_conv = self.process_conversation(conversation)
+            processed_conv = self.process_conversation(conversation) # jh: processed_conv takes in the entire convo context and returns the improved response.
             
             # Skip conversations that were filtered out (returned None)
             if processed_conv is None:
                 continue
                 
-            # Remove the last user feedback turn for feedback and alternative methods
+            # Remove the last user feedback turn for feedback and alternative methods # jh: why do we remove -1 (user feedback turn) from processed_conv['conversation_context']? this is after regenerating improved responses. likely here just due to cleaner formatted outputs.
             if self.method in ["feedback", "alternative"] and processed_conv.get('conversation_context'):
                 if processed_conv['conversation_context'][-1].get('role') == 'user':
                     del processed_conv['conversation_context'][-1]
@@ -399,7 +456,7 @@ def main():
     """Main function."""
     parser = argparse.ArgumentParser(description='Process conversations with user feedback')
     parser.add_argument('--input', '-i', 
-                       default='data/filtered_conversations_ur235.json',
+                       default='data/filtered_conversations_ur235_mode3.json', # mode 3 contains entire conversation.
                        help='Input JSON file with filtered conversations')
     parser.add_argument('--output', '-o',
                        default='data/improved_conversations.json',
@@ -452,7 +509,7 @@ def main():
         conversations, 
         max_conversations=args.max_conversations,
         delay_between_calls=args.delay
-    )
+    ) # processed_conversations is the list that is saved to the output json.
     
     # Save results
     print(f"\nSaving processed conversations to {args.output}...")
